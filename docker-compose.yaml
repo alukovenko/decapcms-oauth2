@@ -1,0 +1,11 @@
+services:
+  decapcms-oauth2:
+    image: alukovenko/decapcms-oauth2:latest
+    restart: always
+    environment:
+      - OAUTH_CLIENT_ID=<client id>
+      - OAUTH_CLIENT_SECRET=<client secret>
+      - SERVER_PORT=9000
+      - TRUSTED_ORIGIN=<website url>
+    ports:
+      - "127.0.0.1:9000:9000"
