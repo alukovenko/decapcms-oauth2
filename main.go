@@ -13,7 +13,7 @@ import (
 
 var clientId string
 var clientSecret string
-var trustedOrigin string
+var trustedOrigins []string
 var serverHost string
 var serverPort string
 
@@ -27,11 +27,25 @@ func init() {
 	clientSecret = os.Getenv("OAUTH_CLIENT_SECRET")
 	serverHost = os.Getenv("SERVER_HOST")
 	serverPort = os.Getenv("SERVER_PORT")
-	trustedOrigin = os.Getenv("TRUSTED_ORIGIN")
 
-	if clientId == "" || clientSecret == "" || serverPort == "" || trustedOrigin == "" {
-		// SERVER_HOST is optional, can be empty
-		log.Fatalf("OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, TRUSTED_ORIGIN and SERVER_PORT environment variables are required\n")
+	rawOrigins := os.Getenv("TRUSTED_ORIGINS")
+	singleOrigin := os.Getenv("TRUSTED_ORIGIN")
+
+	switch {
+	case rawOrigins != "":
+		trustedOrigins = strings.Split(rawOrigins, ",")
+	case singleOrigin != "":
+		trustedOrigins = []string{singleOrigin}
+	default:
+		log.Fatalf("You must set either TRUSTED_ORIGIN or TRUSTED_ORIGINS\n")
+	}
+
+	for i := range trustedOrigins {
+		trustedOrigins[i] = strings.TrimSpace(trustedOrigins[i])
+	}
+
+	if clientId == "" || clientSecret == "" || serverPort == "" || len(trustedOrigins) == 0 {
+		log.Fatalf("OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, SERVER_PORT, and at least one TRUSTED_ORIGIN(S) are required\n")
 	}
 }
 
@@ -42,7 +56,6 @@ func getAccessToken(code string) (string, error) {
 	data.Set("client_secret", clientSecret)
 	data.Set("code", code)
 
-	// Make a POST request with URL-encoded data
 	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", err
@@ -93,33 +106,36 @@ func callbackHandler(w http.ResponseWriter, r *http.Request) {
 		"provider": "github",
 	}
 	postMsgJSON, _ := json.Marshal(postMsgContent)
+	trustedJSON, _ := json.Marshal(trustedOrigins)
 
 	script := fmt.Sprintf(`
-        <html>
-        <body>
-        <script>
-        (function() {
-            function receiveMessage(e) {
-                console.log("receiveMessage", e);
-				if (e.origin === "%s") {
-					window.opener.postMessage(
-						'authorization:github:success:%s',
-						e.origin
-                	);
-				} else {
-					console.log("Origin not trusted", e.origin);
-				}
-            }
-            window.addEventListener("message", receiveMessage, false);
-            window.opener.postMessage("authorizing:github", "*");
-        })()
-        </script>
-        </body>
-        </html>
-    `, trustedOrigin, string(postMsgJSON))
+<html>
+<body>
+<script>
+(function() {
+	const trusted = %s;
+
+	function receiveMessage(e) {
+		if (trusted.includes(e.origin)) {
+			window.opener.postMessage(
+				'authorization:github:success:%s',
+				e.origin
+			);
+		} else {
+			console.warn("Origin not trusted:", e.origin);
+		}
+	}
+
+	window.addEventListener("message", receiveMessage, false);
+	window.opener.postMessage("authorizing:github", "*");
+})();
+</script>
+</body>
+</html>
+`, trustedJSON, string(postMsgJSON))
 
 	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(script))
+	_, _ = w.Write([]byte(script))
 }
 
 func main() {
